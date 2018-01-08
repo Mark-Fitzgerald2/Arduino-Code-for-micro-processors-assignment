@@ -1,0 +1,282 @@
+#include <Pololu3pi.h>
+#include <PololuQTRSensors.h>
+#include <OrangutanMotors.h>
+#include <OrangutanAnalog.h>
+#include <OrangutanLCD.h>
+#include <OrangutanPushbuttons.h>
+Pololu3pi robot;
+unsigned int sensors[5]; // an array to hold sensor values
+OrangutanMotors motors;
+OrangutanPushbuttons buttons;
+const int pin0 = 0;
+const int pin1 = 1;
+int bin_one;
+int bin_two;
+int calibration_bit = 0; //used to check if the line follower is calibrated
+int bluetooth_bit = 0; //used to output what mode it is in
+unsigned int counter; // used as a simple timer
+void setup(){
+// This must be called at the beginning of 3pi code, to set up the
+// sensors. We use a value of 2000 for the timeout, which
+// corresponds to 2000*0.4 us = 0.8 ms on our 20 MHz processor.
+robot.init(2000);
+pinMode(pin0,OUTPUT);
+pinMode(pin1,OUTPUT);
+digitalWrite(pin0, LOW);
+digitalWrite(pin1, LOW);
+//sets pin0 and pin1 as outputs
+//this is to allow us to tell the genuino which state we are in
+//these are originally both set LOW so it won't
+//accidentally tell the Genuino it is in a certain state
+int bat = OrangutanAnalog::readBatteryMillivolts();
+OrangutanLCD::clear();
+OrangutanLCD::print(bat);
+OrangutanLCD::print("mV");
+//prints battery info to LCD
+OrangutanLCD::gotoXY(0, 1);
+OrangutanLCD::print("Press A or B");
+//tells user to select either A or B
+//to begin
+delay(100);
+}
+
+void loop()
+{
+	motors.setSpeeds(0,0);
+	//makes sure the robot isn't moving
+	unsigned char button = OrangutanPushbuttons::waitForPress(ANY_BUTTON);
+	//checks if a button is pressed
+	if(button == BUTTON_A){
+		//if the button pressed is A do this
+		OrangutanLCD::clear();
+		while(OrangutanPushbuttons::waitForRelease(button)) {
+			//waits till the button is released
+			//this is so the robot doesn't drive off
+			//when you are still holding it
+			if (bluetooth_bit == 0) {
+				bluetooth_bit = 2;
+				bluetooth_Mode();
+				//calls bluetooth mode to tell the genuino
+				//what state it is about to enter
+			}
+		Bluetooth_Control(); //calls the bluetooth control method
+		}
+	}
+	if(button == BUTTON_B){
+		//if the button is b do this
+		OrangutanLCD::clear();
+		while(OrangutanPushbuttons::waitForRelease(button)) {
+			//waits till the button is released
+			//this is so the robot doesn't drive off
+			//when you are still holding it
+			if (calibration_bit == 0) {
+			//checks if the IR sensors are calibrated
+			//if it is not
+			//it will call the calibration sensor
+			calibration();
+			}
+
+			if (bluetooth_bit == 0) {
+				bluetooth_bit = 1;
+				bluetooth_Mode();
+				//sets the bluetooth bit to
+				//tell the genuino
+				//what state it is about to enter
+			}
+			lineFollower();
+			//calls the line follower function
+		}
+	}
+}
+
+
+void lineFollower() {
+	pinMode(pin0,OUTPUT);
+	pinMode(pin1,OUTPUT);
+	//makes sure the pins are outputs
+	while(!OrangutanPushbuttons::isPressed(BUTTON_A)) {
+		//if button a is not pressed loop over this code
+		unsigned int position = robot.readLine(sensors, IR_EMITTERS_ON);
+		//updates values in sensor array
+		int value = sensors[1];
+		int value2 = sensors[3];
+		int diff = value - value2;
+		//calculates the difference between two sensors off centre
+		if (diff < - 100) {
+			//if this value is quite low it needs to turn
+			if( diff > -400){
+				//checks if this is value is between -100 and -400
+				motors.setSpeeds(20,0);
+				digitalWrite(pin0, HIGH);
+				digitalWrite(pin1, HIGH);
+				//turns at a speed of 20
+				//tells Genuino it is turning
+			} 
+			else if (diff < -400) {
+				motors.setSpeeds(50,0);
+				digitalWrite(pin0, HIGH);
+				digitalWrite(pin1, HIGH);
+				//turns at a speed of 50
+				//tells Genuino it is turning
+			}
+		}
+		else if( diff > -100 && diff < 100) {
+	 	//if diff is between -100 and 100 it is on a straight line
+			if ( sensors[0] < 100 && sensors[4] < 100) {
+				//if the outermost sensors are reading low values
+				//it can not be the thickest line 
+				if ( sensors[1] <500 && sensors[3] <500) {
+					//if the two sensors off centre are lower than 500
+					//the line is the lowest thickness
+					motors.setSpeeds(20, 20);
+					digitalWrite(pin0, LOW);
+					digitalWrite(pin1, LOW);
+					//sets speed at 20 
+					//tells Genuino this speed
+				}
+				else if (sensors[2] > 500 && sensors[3] > 500){
+					//if the two sensors off centre are greater than 500
+					//the line is at the middle thickness
+					motors.setSpeeds(50, 50);
+					digitalWrite(pin0, LOW);
+					digitalWrite(pin1, HIGH); 
+					//sets speed at 50 
+					//tells Genuino this speed
+				} 
+			}
+			else {
+				//otherwise it must be at the highest thickness
+				motors.setSpeeds(80, 80);
+				digitalWrite(pin0, HIGH);
+				digitalWrite(pin1, LOW);
+				//sets speed to 80
+				//tells Genuino this speed
+			}
+		}
+		else if (diff > 100) {
+			//if diff is greater than 100
+			//it needs to turn right
+			if( diff < 400) {
+				//if its between 100 and 400
+				motors.setSpeeds(0,20);
+				digitalWrite(pin0, HIGH);
+				digitalWrite(pin1, HIGH);
+				//set speed to 20
+				//tells Genuino it is turning
+			}
+			else {
+				//if it is larger than 400
+				motors.setSpeeds(0,50);
+				digitalWrite(pin0, HIGH);
+				digitalWrite(pin1, HIGH);
+				//set speed to 50
+				//tells Genuino it is turning
+			}
+		}
+	}
+	//this code will only be run if button is is pressed
+	OrangutanPushbuttons::waitForRelease(BUTTON_A);
+	//we can only continue if button A is released
+	delay(100);
+	bluetooth_bit = 2;
+	bluetooth_Mode();
+	//sets bluetooth bit to 2 to tell Genuino
+	//it is about to change state
+	Bluetooth_Control();
+	//calls bluetooth control function
+}
+
+void calibration() {
+  for (counter=0; counter<80; counter++) {
+    //takes use of simple timer
+    if (counter < 20 || counter >= 60)
+      OrangutanMotors::setSpeeds(40, -40);
+      //spins in a circle going clockwise
+    else
+      OrangutanMotors::setSpeeds(-40, 40);
+      //spins in a circle going anticlockwise
+
+    // This function records a set of sensor readings and keeps
+    // track of the minimum and maximum values encountered.  The
+    // IR_EMITTERS_ON argument means that the IR LEDs will be
+    // turned on during the reading, which is usually what you
+    // want.
+    robot.calibrateLineSensors(IR_EMITTERS_ON);
+
+    // Since our counter runs to 80, the total delay will be
+    // 80*20 = 1600 ms.
+    delay(20);
+  }
+  calibration_bit = 1;
+  //sets this bit to 1 
+  //this says it has been calibrated before
+}
+
+void Bluetooth_Control(){
+  pinMode(pin0,INPUT);
+  pinMode(pin1,INPUT);
+  //changes pin modes to inputs
+  while (!OrangutanPushbuttons::isPressed(BUTTON_B)) {
+    //this code will run while button b is not pressed
+   bin_one=digitalRead(pin0);
+    bin_two = digitalRead(pin1);
+    //reads values from pins
+    
+    if (bin_one == HIGH && bin_two == HIGH ){
+      motors.setSpeeds(50,50);
+      //if both are high drive forward
+    }
+  
+    else if(bin_one == LOW && bin_two == HIGH){
+      motors.setSpeeds(0,50); 
+      //if Pin1 is high and Pin0 is low turn right 
+    }
+  
+    else if(bin_one == HIGH && bin_two == LOW){
+      motors.setSpeeds(50,0);  
+      //if Pin0 is high and Pin1 is low turn left 
+    }
+  
+    else if(bin_one == LOW && bin_two == LOW){
+      motors.setSpeeds(0,0); 
+      //if both are low stop   
+    }
+  }
+  //this code will only run if button b is pressed
+  OrangutanPushbuttons::waitForRelease(BUTTON_B);
+  //this will only continue when button b is released
+  delay(100);
+  calibration();
+  //calls the calibration function
+  bluetooth_bit = 1;
+  bluetooth_Mode();
+  //changes bluetooth bit to tell Genuino
+  //we are changing state
+  lineFollower();
+  //switches to line follower
+}
+    
+void bluetooth_Mode() { 
+  //used to talk with Genuino
+  pinMode(pin0,OUTPUT);
+  pinMode(pin1,OUTPUT);
+  //makes sure the pins are outputs
+  if (bluetooth_bit == 1) {
+    //if the value is one
+    //we are about to go into the line follower
+    digitalWrite(pin0, HIGH);
+   //set Pin0 high to tell this to genuino
+    delay(100);
+    digitalWrite(pin0, LOW);
+    //set it low again 
+  } 
+  else if (bluetooth_bit == 2) {
+    //if the value is two
+    //we are about to go into the bluetooth mode
+    digitalWrite(pin1, HIGH);
+    //set Pin1 high to tell this to genuino
+    delay(100);
+    digitalWrite(pin1, LOW);
+    //set it low again
+  }
+}
